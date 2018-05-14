@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -51,27 +51,37 @@ func DoesContainHandler(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 
-	err := decoder.Decode(&x)
-	if err != nil {
-		http.Error(w, "Invalid Request: "+err.Error(),
+	decodeErr := decoder.Decode(&x)
+	if decodeErr != nil {
+		http.Error(w, "Invalid Request: "+decodeErr.Error(),
 			http.StatusInternalServerError)
 		return
 	}
 
 	var res minion.MinionResponse
+	res.Result = false // Which would already be the default value
 
-	// Reads entire file into memory
-	fileBody, statErr := ioutil.ReadFile(x.Path)
-	if statErr != nil {
-		res.Result = false
-		goto end
+	file, err := os.Open(x.Path)
+	if err != nil {
+		http.Error(w, "Fileopen Error: "+decodeErr.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), x.Check) {
+			res.Result = true
+			// We can exit at the first chance.
+			goto end
+		}
 	}
 
-	// Would work only for plain text files
-	if strings.Contains(string(fileBody), x.Check) {
-		res.Result = true
-	} else {
-		res.Result = false
+	if err := scanner.Err(); err != nil {
+		http.Error(w, "Fileread Error: "+decodeErr.Error(),
+			http.StatusInternalServerError)
+		return
 	}
 
 end:
