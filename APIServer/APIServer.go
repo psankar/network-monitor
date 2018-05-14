@@ -51,6 +51,171 @@ type OpResp struct {
 	UnReachableMachines []string // These machines are unreachable at the moment
 }
 
+func processOperation(k string, v Operation, opsWg sync.WaitGroup,
+	ch chan OpResp, jobs chan contactMinionJob) {
+	defer opsWg.Done()
+
+	passMachines := make(chan string)
+	failedMachines := make(chan string)
+	unreachableMachines := make(chan string)
+	errMachines := make(chan string)
+	var wg sync.WaitGroup
+	var opResp OpResp
+	opResp.OperationID = k
+	var collectorWG sync.WaitGroup
+
+	switch v.Type {
+	case OpTypeDoesExist:
+		jData, err := json.Marshal(minion.DoesExistReq{
+			Path: v.Path})
+		if err != nil {
+			log.Println(err)
+			opResp.ErroneousRequest = true
+			opResp.ErrorMessage = "Internal Server Error"
+			goto end
+		}
+
+		for _, i := range minionURLs {
+			wg.Add(1)
+			go func(hostname, urlPrefix string) {
+				defer wg.Done()
+
+				u := urlPrefix + "does-exist"
+				minionReq, err := http.NewRequest("POST",
+					u,
+					bytes.NewBuffer(jData))
+				if err != nil {
+					errMachines <- hostname
+					return
+				}
+				minionReq.Header.Set("Content-Type", "application/json")
+				done := make(chan bool)
+				jobs <- contactMinionJob{minionReq, hostname, passMachines,
+					failedMachines, unreachableMachines, errMachines, done}
+				<-done
+				return
+			}(i.Hostname, i.URL)
+		}
+
+	case OpTypeDoesContain:
+		jData, err := json.Marshal(minion.DoesContainReq{
+			Path:  v.Path,
+			Check: v.Check,
+		})
+		if err != nil {
+			log.Println(err)
+			opResp.ErroneousRequest = true
+			opResp.ErrorMessage = "Internal Server Error"
+			goto end
+		}
+
+		for _, i := range minionURLs {
+			wg.Add(1)
+			go func(hostname, urlPrefix string) {
+				defer wg.Done()
+				u := urlPrefix + "does-contain"
+				minionReq, err := http.NewRequest("POST",
+					u,
+					bytes.NewBuffer(jData))
+				if err != nil {
+					errMachines <- hostname
+					return
+				}
+				minionReq.Header.Set("Content-Type", "application/json")
+				done := make(chan bool)
+				jobs <- contactMinionJob{minionReq, hostname, passMachines,
+					failedMachines, unreachableMachines, errMachines, done}
+				<-done
+				return
+			}(i.Hostname, i.URL)
+		}
+	case OpTypeIsRunning:
+		jData, err := json.Marshal(minion.IsRunningReq{
+			ProcessName: v.Check,
+		})
+		if err != nil {
+			log.Println(err)
+			opResp.ErroneousRequest = true
+			opResp.ErrorMessage = "Internal Server Error"
+			goto end
+		}
+
+		for _, i := range minionURLs {
+			wg.Add(1)
+			go func(hostname, url string) {
+				defer wg.Done()
+				minionReq, err := http.NewRequest("POST",
+					url+"is-running",
+					bytes.NewBuffer(jData))
+				if err != nil {
+					errMachines <- hostname
+					return
+				}
+				minionReq.Header.Set("Content-Type", "application/json")
+				done := make(chan bool)
+				jobs <- contactMinionJob{minionReq, hostname, passMachines,
+					failedMachines, unreachableMachines, errMachines, done}
+				<-done
+				return
+			}(i.Hostname, i.URL)
+		}
+	default:
+		opResp.ErroneousRequest = true
+		opResp.ErrorMessage = "Unknown type of `Operation"
+		goto end
+	}
+
+	// Closes the channel after all the Ops are processed
+	go func() {
+		wg.Wait()
+		close(passMachines)
+		close(failedMachines)
+		close(unreachableMachines)
+		close(errMachines)
+	}()
+
+	collectorWG.Add(1)
+	go func() {
+		for i := range failedMachines {
+			opResp.FailedMachines = append(opResp.FailedMachines, i)
+		}
+		collectorWG.Done()
+	}()
+
+	collectorWG.Add(1)
+	go func() {
+		for i := range passMachines {
+			opResp.PassedMachines = append(opResp.PassedMachines, i)
+		}
+		collectorWG.Done()
+	}()
+
+	collectorWG.Add(1)
+	go func() {
+		for i := range unreachableMachines {
+			opResp.UnReachableMachines = append(opResp.UnReachableMachines, i)
+		}
+		collectorWG.Done()
+	}()
+
+	collectorWG.Add(1)
+	go func() {
+		for i := range errMachines {
+			opResp.ErrorMachines = append(opResp.ErrorMachines, i)
+		}
+		collectorWG.Done()
+	}()
+
+	collectorWG.Wait()
+
+	opResp.ErroneousRequest = false
+	opResp.ErrorMessage = ""
+
+end:
+	ch <- opResp
+
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	x := make(map[string]Operation)
 
@@ -76,168 +241,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	for k1, v1 := range x {
 		opsWg.Add(1)
 
-		go func(k string, v Operation) {
-			defer opsWg.Done()
-
-			passMachines := make(chan string)
-			failedMachines := make(chan string)
-			unreachableMachines := make(chan string)
-			errMachines := make(chan string)
-			var wg sync.WaitGroup
-			var opResp OpResp
-			opResp.OperationID = k
-			var collectorWG sync.WaitGroup
-
-			switch v.Type {
-			case OpTypeDoesExist:
-				jData, err := json.Marshal(minion.DoesExistReq{
-					Path: v.Path})
-				if err != nil {
-					log.Println(err)
-					opResp.ErroneousRequest = true
-					opResp.ErrorMessage = "Internal Server Error"
-					goto end
-				}
-
-				for _, i := range minionURLs {
-					wg.Add(1)
-					go func(hostname, urlPrefix string) {
-						defer wg.Done()
-
-						u := urlPrefix + "does-exist"
-						minionReq, err := http.NewRequest("POST",
-							u,
-							bytes.NewBuffer(jData))
-						if err != nil {
-							errMachines <- hostname
-							return
-						}
-						minionReq.Header.Set("Content-Type", "application/json")
-						done := make(chan bool)
-						jobs <- contactMinionJob{minionReq, hostname, passMachines,
-							failedMachines, unreachableMachines, errMachines, done}
-						<-done
-						return
-					}(i.Hostname, i.URL)
-				}
-
-			case OpTypeDoesContain:
-				jData, err := json.Marshal(minion.DoesContainReq{
-					Path:  v.Path,
-					Check: v.Check,
-				})
-				if err != nil {
-					log.Println(err)
-					opResp.ErroneousRequest = true
-					opResp.ErrorMessage = "Internal Server Error"
-					goto end
-				}
-
-				for _, i := range minionURLs {
-					wg.Add(1)
-					go func(hostname, urlPrefix string) {
-						defer wg.Done()
-						u := urlPrefix + "does-contain"
-						minionReq, err := http.NewRequest("POST",
-							u,
-							bytes.NewBuffer(jData))
-						if err != nil {
-							errMachines <- hostname
-							return
-						}
-						minionReq.Header.Set("Content-Type", "application/json")
-						done := make(chan bool)
-						jobs <- contactMinionJob{minionReq, hostname, passMachines,
-							failedMachines, unreachableMachines, errMachines, done}
-						<-done
-						return
-					}(i.Hostname, i.URL)
-				}
-			case OpTypeIsRunning:
-				jData, err := json.Marshal(minion.IsRunningReq{
-					ProcessName: v.Check,
-				})
-				if err != nil {
-					log.Println(err)
-					opResp.ErroneousRequest = true
-					opResp.ErrorMessage = "Internal Server Error"
-					goto end
-				}
-
-				for _, i := range minionURLs {
-					wg.Add(1)
-					go func(hostname, url string) {
-						defer wg.Done()
-						minionReq, err := http.NewRequest("POST",
-							url+"is-running",
-							bytes.NewBuffer(jData))
-						if err != nil {
-							errMachines <- hostname
-							return
-						}
-						minionReq.Header.Set("Content-Type", "application/json")
-						done := make(chan bool)
-						jobs <- contactMinionJob{minionReq, hostname, passMachines,
-							failedMachines, unreachableMachines, errMachines, done}
-						<-done
-						return
-					}(i.Hostname, i.URL)
-				}
-			default:
-				opResp.ErroneousRequest = true
-				opResp.ErrorMessage = "Unknown type of `Operation"
-				goto end
-			}
-
-			// Closes the channel after all the Ops are processed
-			go func() {
-				wg.Wait()
-				close(passMachines)
-				close(failedMachines)
-				close(unreachableMachines)
-				close(errMachines)
-			}()
-
-			collectorWG.Add(1)
-			go func() {
-				for i := range failedMachines {
-					opResp.FailedMachines = append(opResp.FailedMachines, i)
-				}
-				collectorWG.Done()
-			}()
-
-			collectorWG.Add(1)
-			go func() {
-				for i := range passMachines {
-					opResp.PassedMachines = append(opResp.PassedMachines, i)
-				}
-				collectorWG.Done()
-			}()
-
-			collectorWG.Add(1)
-			go func() {
-				for i := range unreachableMachines {
-					opResp.UnReachableMachines = append(opResp.UnReachableMachines, i)
-				}
-				collectorWG.Done()
-			}()
-
-			collectorWG.Add(1)
-			go func() {
-				for i := range errMachines {
-					opResp.ErrorMachines = append(opResp.ErrorMachines, i)
-				}
-				collectorWG.Done()
-			}()
-
-			collectorWG.Wait()
-
-			opResp.ErroneousRequest = false
-			opResp.ErrorMessage = ""
-
-		end:
-			ch <- opResp
-		}(k1, v1)
+		go processOperation(k1, v1, opsWg, ch, jobs)
 	}
 
 	go func() {
