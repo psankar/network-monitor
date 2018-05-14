@@ -51,7 +51,7 @@ type OpResp struct {
 	UnReachableMachines []string // These machines are unreachable at the moment
 }
 
-func processOperation(k string, v Operation, opsWg sync.WaitGroup,
+func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	ch chan OpResp, jobs chan contactMinionJob) {
 	defer opsWg.Done()
 
@@ -240,8 +240,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	for k1, v1 := range x {
 		opsWg.Add(1)
-
-		go processOperation(k1, v1, opsWg, ch, jobs)
+		go processOperation(k1, v1, &opsWg, ch, jobs)
 	}
 
 	go func() {
