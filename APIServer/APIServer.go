@@ -201,6 +201,8 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		close(errMachines)
 	}()
 
+	// accumulateResults gathers the response from all the passed channels
+	// and puts them on the opResp parameter.
 	accumulateResults(&opResp, passMachines, failedMachines,
 		unreachableMachines, errMachines)
 
@@ -208,8 +210,8 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	opResp.ErrorMessage = ""
 
 end:
+	// Notify in this channel, after this Operation is fully processed
 	ch <- opResp
-
 }
 
 // accumulateResults gathers the response from all the passed channels
