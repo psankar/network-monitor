@@ -103,6 +103,43 @@ func createDoesExistRequestAndEnqueue(hostname, urlPrefix string,
 	return
 }
 
+func createDoesContainRequestAndEnqueu(hostname, urlPrefix string,
+	wg *sync.WaitGroup, passMachines, failedMachines, unreachableMachines,
+	errMachines chan string, jobs chan contactMinionJob, jData []byte) {
+	defer wg.Done()
+
+	minionReq, err := http.NewRequest("POST",
+		urlPrefix+"does-contain", bytes.NewBuffer(jData))
+	if err != nil {
+		errMachines <- hostname
+		return
+	}
+	minionReq.Header.Set("Content-Type", "application/json")
+	done := make(chan bool)
+	jobs <- contactMinionJob{minionReq, hostname, passMachines,
+		failedMachines, unreachableMachines, errMachines, done}
+	<-done
+	return
+}
+
+func createIsRunningRequestAndEnqueue(hostname, urlPrefix string,
+	wg *sync.WaitGroup, passMachines, failedMachines, unreachableMachines,
+	errMachines chan string, jobs chan contactMinionJob, jData []byte) {
+	defer wg.Done()
+	minionReq, err := http.NewRequest("POST",
+		urlPrefix+"is-running", bytes.NewBuffer(jData))
+	if err != nil {
+		errMachines <- hostname
+		return
+	}
+	minionReq.Header.Set("Content-Type", "application/json")
+	done := make(chan bool)
+	jobs <- contactMinionJob{minionReq, hostname, passMachines,
+		failedMachines, unreachableMachines, errMachines, done}
+	<-done
+	return
+}
+
 func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	ch chan OpResp, jobs chan contactMinionJob) {
 	defer opsWg.Done()
@@ -150,22 +187,9 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 
 		for _, i := range minionURLs {
 			wg.Add(1)
-			go func(hostname, urlPrefix string) {
-				defer wg.Done()
-
-				minionReq, err := http.NewRequest("POST",
-					urlPrefix+"does-contain", bytes.NewBuffer(jData))
-				if err != nil {
-					errMachines <- hostname
-					return
-				}
-				minionReq.Header.Set("Content-Type", "application/json")
-				done := make(chan bool)
-				jobs <- contactMinionJob{minionReq, hostname, passMachines,
-					failedMachines, unreachableMachines, errMachines, done}
-				<-done
-				return
-			}(i.Hostname, i.URL)
+			go createDoesContainRequestAndEnqueu(i.Hostname, i.URL, &wg,
+				passMachines, failedMachines, unreachableMachines, errMachines,
+				jobs, jData)
 		}
 	case OpTypeIsRunning:
 		jData, err := json.Marshal(minion.IsRunningReq{
@@ -180,21 +204,9 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 
 		for _, i := range minionURLs {
 			wg.Add(1)
-			go func(hostname, url string) {
-				defer wg.Done()
-				minionReq, err := http.NewRequest("POST",
-					url+"is-running", bytes.NewBuffer(jData))
-				if err != nil {
-					errMachines <- hostname
-					return
-				}
-				minionReq.Header.Set("Content-Type", "application/json")
-				done := make(chan bool)
-				jobs <- contactMinionJob{minionReq, hostname, passMachines,
-					failedMachines, unreachableMachines, errMachines, done}
-				<-done
-				return
-			}(i.Hostname, i.URL)
+			go createIsRunningRequestAndEnqueue(i.Hostname, i.URL, &wg,
+				passMachines, failedMachines, unreachableMachines, errMachines,
+				jobs, jData)
 		}
 	default:
 		opResp.ErroneousRequest = true
