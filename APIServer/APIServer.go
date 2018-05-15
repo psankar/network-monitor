@@ -102,7 +102,7 @@ func createDoesExistRequestAndEnqueue(hostname, urlPrefix string,
 	return
 }
 
-func createDoesContainRequestAndEnqueu(hostname, urlPrefix string,
+func createDoesContainRequestAndEnqueue(hostname, urlPrefix string,
 	wg *sync.WaitGroup, results *resultsChan,
 	jobs chan contactMinionJob, jData []byte) {
 
@@ -194,7 +194,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 
 		for _, i := range minionURLs {
 			wg.Add(1)
-			go createDoesContainRequestAndEnqueu(i.Hostname, i.URL, &wg,
+			go createDoesContainRequestAndEnqueue(i.Hostname, i.URL, &wg,
 				&results, jobs, jData)
 		}
 	case OpTypeIsRunning:
