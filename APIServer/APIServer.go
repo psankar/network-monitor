@@ -84,60 +84,66 @@ type OpResp struct {
 }
 
 func createDoesExistRequestAndEnqueue(hostname, urlPrefix string,
-	wg *sync.WaitGroup, passMachines, failedMachines, unreachableMachines,
-	errMachines chan string, jobs chan contactMinionJob, jData []byte) {
+	wg *sync.WaitGroup, results *resultsChan,
+	jobs chan contactMinionJob, jData []byte) {
 
 	defer wg.Done()
 
 	minionReq, err := http.NewRequest("POST",
 		urlPrefix+"does-exist", bytes.NewBuffer(jData))
 	if err != nil {
-		errMachines <- hostname
+		results.errMachines <- hostname
 		return
 	}
 	minionReq.Header.Set("Content-Type", "application/json")
 	done := make(chan bool)
-	jobs <- contactMinionJob{minionReq, hostname, passMachines,
-		failedMachines, unreachableMachines, errMachines, done}
+	jobs <- contactMinionJob{minionReq, hostname, results, done}
 	<-done
 	return
 }
 
 func createDoesContainRequestAndEnqueu(hostname, urlPrefix string,
-	wg *sync.WaitGroup, passMachines, failedMachines, unreachableMachines,
-	errMachines chan string, jobs chan contactMinionJob, jData []byte) {
+	wg *sync.WaitGroup, results *resultsChan,
+	jobs chan contactMinionJob, jData []byte) {
+
 	defer wg.Done()
 
 	minionReq, err := http.NewRequest("POST",
 		urlPrefix+"does-contain", bytes.NewBuffer(jData))
 	if err != nil {
-		errMachines <- hostname
+		results.errMachines <- hostname
 		return
 	}
 	minionReq.Header.Set("Content-Type", "application/json")
 	done := make(chan bool)
-	jobs <- contactMinionJob{minionReq, hostname, passMachines,
-		failedMachines, unreachableMachines, errMachines, done}
+	jobs <- contactMinionJob{minionReq, hostname, results, done}
 	<-done
 	return
 }
 
 func createIsRunningRequestAndEnqueue(hostname, urlPrefix string,
-	wg *sync.WaitGroup, passMachines, failedMachines, unreachableMachines,
-	errMachines chan string, jobs chan contactMinionJob, jData []byte) {
+	wg *sync.WaitGroup, results *resultsChan,
+	jobs chan contactMinionJob, jData []byte) {
+
 	defer wg.Done()
 	minionReq, err := http.NewRequest("POST",
 		urlPrefix+"is-running", bytes.NewBuffer(jData))
 	if err != nil {
-		errMachines <- hostname
+		results.errMachines <- hostname
 		return
 	}
 	minionReq.Header.Set("Content-Type", "application/json")
 	done := make(chan bool)
-	jobs <- contactMinionJob{minionReq, hostname, passMachines,
-		failedMachines, unreachableMachines, errMachines, done}
+	jobs <- contactMinionJob{minionReq, hostname, results, done}
 	<-done
 	return
+}
+
+type resultsChan struct {
+	passMachines        chan string
+	failedMachines      chan string
+	unreachableMachines chan string
+	errMachines         chan string
 }
 
 func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
@@ -146,10 +152,10 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 
 	// TODO: Since these four are always passed along together,
 	// we could create a new resultsChannels struct
-	passMachines := make(chan string)
-	failedMachines := make(chan string)
-	unreachableMachines := make(chan string)
-	errMachines := make(chan string)
+	results := resultsChan{
+		make(chan string), make(chan string),
+		make(chan string), make(chan string),
+	}
 
 	var wg sync.WaitGroup
 	var opResp OpResp
@@ -169,8 +175,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		for _, i := range minionURLs {
 			wg.Add(1)
 			go createDoesExistRequestAndEnqueue(i.Hostname, i.URL, &wg,
-				passMachines, failedMachines, unreachableMachines, errMachines,
-				jobs, jData)
+				&results, jobs, jData)
 		}
 
 	case OpTypeDoesContain:
@@ -188,8 +193,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		for _, i := range minionURLs {
 			wg.Add(1)
 			go createDoesContainRequestAndEnqueu(i.Hostname, i.URL, &wg,
-				passMachines, failedMachines, unreachableMachines, errMachines,
-				jobs, jData)
+				&results, jobs, jData)
 		}
 	case OpTypeIsRunning:
 		jData, err := json.Marshal(minion.IsRunningReq{
@@ -205,8 +209,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		for _, i := range minionURLs {
 			wg.Add(1)
 			go createIsRunningRequestAndEnqueue(i.Hostname, i.URL, &wg,
-				passMachines, failedMachines, unreachableMachines, errMachines,
-				jobs, jData)
+				&results, jobs, jData)
 		}
 	default:
 		opResp.ErroneousRequest = true
@@ -217,16 +220,15 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	// Closes the channel after all the Ops are processed
 	go func() {
 		wg.Wait()
-		close(passMachines)
-		close(failedMachines)
-		close(unreachableMachines)
-		close(errMachines)
+		close(results.passMachines)
+		close(results.failedMachines)
+		close(results.unreachableMachines)
+		close(results.errMachines)
 	}()
 
 	// accumulateResults gathers the response from all the passed channels
 	// and puts them on the opResp parameter.
-	accumulateResults(&opResp, passMachines, failedMachines,
-		unreachableMachines, errMachines)
+	accumulateResults(&opResp, &results)
 
 	opResp.ErroneousRequest = false
 	opResp.ErrorMessage = ""
@@ -238,13 +240,12 @@ end:
 
 // accumulateResults gathers the response from all the passed channels
 // and puts them on the opResp parameter.
-func accumulateResults(opResp *OpResp, passMachines, failedMachines,
-	unreachableMachines, errMachines chan string) {
+func accumulateResults(opResp *OpResp, r *resultsChan) {
 	var collectorWG sync.WaitGroup
 
 	collectorWG.Add(1)
 	go func() {
-		for i := range failedMachines {
+		for i := range r.failedMachines {
 			opResp.FailedMachines = append(opResp.FailedMachines, i)
 		}
 		collectorWG.Done()
@@ -252,7 +253,7 @@ func accumulateResults(opResp *OpResp, passMachines, failedMachines,
 
 	collectorWG.Add(1)
 	go func() {
-		for i := range passMachines {
+		for i := range r.passMachines {
 			opResp.PassedMachines = append(opResp.PassedMachines, i)
 		}
 		collectorWG.Done()
@@ -260,7 +261,7 @@ func accumulateResults(opResp *OpResp, passMachines, failedMachines,
 
 	collectorWG.Add(1)
 	go func() {
-		for i := range unreachableMachines {
+		for i := range r.unreachableMachines {
 			opResp.UnReachableMachines = append(opResp.UnReachableMachines, i)
 		}
 		collectorWG.Done()
@@ -268,7 +269,7 @@ func accumulateResults(opResp *OpResp, passMachines, failedMachines,
 
 	collectorWG.Add(1)
 	go func() {
-		for i := range errMachines {
+		for i := range r.errMachines {
 			opResp.ErrorMachines = append(opResp.ErrorMachines, i)
 		}
 		collectorWG.Done()
@@ -337,21 +338,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 // of the operation. The jobs are executed through a simple worker-pool
 // as used in the worker function below.
 type contactMinionJob struct {
-	minionReq           *http.Request
-	hostname            string
-	passMachines        chan<- string
-	failedMachines      chan<- string
-	unreachableMachines chan<- string
-	errMachines         chan<- string
-	done                chan<- bool
+	minionReq *http.Request
+	hostname  string
+	results   *resultsChan
+	done      chan<- bool
 }
 
 func worker(id int, jobs <-chan contactMinionJob) {
 	for i := range jobs {
 		log.Println("WorkerID: ", id, "contacting hostname:",
 			i.hostname, " for ", i.minionReq.URL)
-		contactMinion(i.minionReq, i.hostname, i.passMachines,
-			i.failedMachines, i.unreachableMachines, i.errMachines)
+		contactMinion(i.minionReq, i.hostname, i.results)
 		// Synchronously block until the actual HTTP request is made
 		// and then notifies in the done channel of each request
 		i.done <- true
@@ -360,26 +357,26 @@ func worker(id int, jobs <-chan contactMinionJob) {
 
 // Makes the actual HTTP request
 func contactMinion(minionReq *http.Request, hostname string,
-	passMachines chan<- string, failedMachines chan<- string,
-	unreachableMachines chan<- string, errMachines chan<- string) {
+	rc *resultsChan) {
+
 	// log.Println("Entering contactMinion", minionReq.URL)
 	// defer log.Println("Exiting contactMinion", minionReq.URL)
 
 	minionResp, err := client.Do(minionReq)
 	if err != nil {
-		unreachableMachines <- hostname
+		rc.unreachableMachines <- hostname
 		return
 	}
 
 	if minionResp.StatusCode != http.StatusOK {
-		errMachines <- hostname
+		rc.errMachines <- hostname
 		return
 	}
 
 	var minionRespBody []byte
 	minionRespBody, err = ioutil.ReadAll(minionResp.Body)
 	if err != nil {
-		errMachines <- hostname
+		rc.errMachines <- hostname
 		return
 	}
 	// log.Println(string(minionRespBody), minionReq.URL)
@@ -387,18 +384,18 @@ func contactMinion(minionReq *http.Request, hostname string,
 	var mr minion.MinionResponse
 	if err := json.Unmarshal(minionRespBody, &mr); err != nil {
 		log.Println("contactMinion: JSON Unmarshal failed: ", err)
-		errMachines <- hostname
+		rc.errMachines <- hostname
 		return
 	}
 
 	// log.Println(mr)
 
 	if mr.Result == true {
-		passMachines <- hostname
+		rc.passMachines <- hostname
 		return
 	}
 
-	failedMachines <- hostname
+	rc.failedMachines <- hostname
 	return
 }
 
