@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/psankar/network-monitor/Minion/minion"
+	"github.com/psankar/network-monitor/pkg/minion"
 )
 
 func DoesExistHandler(w http.ResponseWriter, r *http.Request) {

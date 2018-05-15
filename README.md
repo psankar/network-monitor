@@ -84,14 +84,14 @@ OpResp {
 # Usage Instruction
 We will run 4 instances of the Minions to simulate 4 machines in the network and will run one instance of the API Server.
 ```
-Minion$ # Launch the Minion servers
-Minion$ PORT=9000 go run Minion.go
-Minion$ PORT=9001 go run Minion.go
-Minion$ PORT=9002 go run Minion.go
-Minion$ PORT=9003 go run Minion.go
+cmd/minion$ # Launch the Minion servers
+cmd/minion$ PORT=9000 go run minion.go
+cmd/minion$ PORT=9001 go run minion.go
+cmd/minion$ PORT=9002 go run minion.go
+cmd/minion$ PORT=9003 go run minion.go
 
-APIServer$ # Launch the APIServer
-APIServer$ go run APIServer.go
+cmd/api-server$ # Launch the APIServer
+cmd/api-server$ go run api-server.go
 
 $ # Make a sample HTTP Request
 $ curl --header "Content-Type: application/json" \

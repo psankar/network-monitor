@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	// _ "github.com/motemen/go-loghttp/global"
-	"github.com/psankar/network-monitor/Minion/minion"
+	"github.com/psankar/network-monitor/pkg/minion"
 )
 
 // minionURLs refer to the list of URLs of the
