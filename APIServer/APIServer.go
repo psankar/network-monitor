@@ -31,31 +31,56 @@ var minionURLs = []struct {
 // This should be less than your ulimits
 const numWorkers = 2
 
+// Operation is a representation of each incoming query, such as
+// a check_virus_file_exists or a check_etc_hosts_has_4488
 type Operation struct {
-	Path  string `json:"path"`
-	Type  string `json:"type"`
+	// Path is the actual file path where the operation
+	// should be performed in the minion
+	Path string `json:"path"`
+
+	// Type should be one of the OpType constants defined below
+	Type string `json:"type"`
+
+	// Check is the parameter that should be used for
+	// the completion of the operation
 	Check string `json:"check"`
 }
 
-const OpTypeDoesExist = "file_exists"
-const OpTypeDoesContain = "file_contains"
-const OpTypeIsRunning = "is_running"
+const (
+	OpTypeDoesExist   = "file_exists"
+	OpTypeDoesContain = "file_contains"
+	OpTypeIsRunning   = "is_running"
+)
 
 type OpResp struct {
 	OperationID string `json:"-"`
 
-	ErroneousRequest bool   // Will be true if the request is invalid
-	ErrorMessage     string // Contains valid string explaining why the request
-	// is invalid, if the above bool is true. Should ignore if the above value
-	// is false.
+	// ErroneousRequest indicates whether the operation completed succesfully
+	// or not. If this is set to true, ErrorMessage will have a meaningful
+	// error description. This is also set when the server faces some kind of
+	// internal error too.
+	ErroneousRequest bool
 
-	PassedMachines []string // The Test passed in these machines
-	FailedMachines []string // The Test failed in these machines
+	// ErrorMessage contains a valid string only when the above boolean is true
+	ErrorMessage string
 
-	ErrorMachines []string // Could not find out if the Test passed
-	// in these machines, due to some operational issues
+	// PassedMachines is the list of machines where the operation
+	// was succesfully evaluated
+	PassedMachines []string
 
-	UnReachableMachines []string // These machines are unreachable at the moment
+	// FailedMachines is the list of machines where the operation
+	// was not succesful. For example, a file is not available
+	// in the needed path
+	FailedMachines []string
+
+	// ErrorMachines is a list of machines where the result of
+	// the operation could not be detected correctly, possibly
+	// due to server side issues. The client can retry after sometime.
+	ErrorMachines []string
+
+	// UnReachableMachines contain the list of minion machines
+	// which are currently not reachable in the network
+	UnReachableMachines []string
 }
 
 func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
@@ -86,10 +111,8 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 			go func(hostname, urlPrefix string) {
 				defer wg.Done()
 
-				u := urlPrefix + "does-exist"
 				minionReq, err := http.NewRequest("POST",
-					u,
-					bytes.NewBuffer(jData))
+					urlPrefix+"does-exist", bytes.NewBuffer(jData))
 				if err != nil {
 					errMachines <- hostname
 					return
@@ -119,10 +142,9 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 			wg.Add(1)
 			go func(hostname, urlPrefix string) {
 				defer wg.Done()
-				u := urlPrefix + "does-contain"
+
 				minionReq, err := http.NewRequest("POST",
-					u,
-					bytes.NewBuffer(jData))
+					urlPrefix+"does-contain", bytes.NewBuffer(jData))
 				if err != nil {
 					errMachines <- hostname
 					return
@@ -151,8 +173,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 			go func(hostname, url string) {
 				defer wg.Done()
 				minionReq, err := http.NewRequest("POST",
-					url+"is-running",
-					bytes.NewBuffer(jData))
+					url+"is-running", bytes.NewBuffer(jData))
 				if err != nil {
 					errMachines <- hostname
 					return
@@ -191,6 +212,8 @@ end:
 
 }
 
+// accumulateResults gathers the response from all the passed channels
+// and puts them on the opResp parameter.
 func accumulateResults(opResp *OpResp, passMachines, failedMachines,
 	unreachableMachines, errMachines chan string) {
 	var collectorWG sync.WaitGroup
@@ -284,6 +307,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+// contactMinionJob refers to each task that will be asynchronously
+// executed to contact a minion and check the status of the operation.
+// Each channel that is a member of this struct, will get the result
+// of the operation. The jobs are executed through a simple worker-pool
+// as used in the worker function below.
 type contactMinionJob struct {
 	minionReq           *http.Request
 	hostname            string
@@ -300,10 +328,13 @@ func worker(id int, jobs <-chan contactMinionJob) {
 			i.hostname, " for ", i.minionReq.URL)
 		contactMinion(i.minionReq, i.hostname, i.passMachines,
 			i.failedMachines, i.unreachableMachines, i.errMachines)
+		// Synchronously block until the actual HTTP request is made
+		// and then notifies in the done channel of each request
 		i.done <- true
 	}
 }
 
+// Makes the actual HTTP request
 func contactMinion(minionReq *http.Request, hostname string,
 	passMachines chan<- string, failedMachines chan<- string,
 	unreachableMachines chan<- string, errMachines chan<- string) {
@@ -347,6 +378,8 @@ func contactMinion(minionReq *http.Request, hostname string,
 	return
 }
 
+// A single threadsafe http client that can be reused. This could be
+// tweaked to cache sessions, alter timeouts etc.
 var client = &http.Client{}
 
 func main() {
