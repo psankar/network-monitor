@@ -84,11 +84,16 @@ OpResp {
 # Usage Instruction
 We will run 4 instances of the Minions to simulate 4 machines in the network and will run one instance of the API Server.
 ```
+Minion$ # Launch the Minion servers
 Minion$ PORT=9000 go run Minion.go
 Minion$ PORT=9001 go run Minion.go
 Minion$ PORT=9002 go run Minion.go
 Minion$ PORT=9003 go run Minion.go
+
+APIServer$ # Launch the APIServer
 APIServer$ go run APIServer.go
+
+$ # Make a sample HTTP Request
 $ curl --header "Content-Type: application/json" \
   --request POST \
   --data '{
@@ -103,6 +108,24 @@ $ curl --header "Content-Type: application/json" \
   }
 }' \
   http://localhost:8000/
+
+$ # This should return a succesful response for 
+$ # check_etc_hosts_has_4488 check
+$ curl --header "Content-Type: application/json" \
+  --request POST \
+  --data '{
+  "check_etc_hosts_has_4488": {
+    "path": "/etc/hosts",
+    "type": "file_contains",
+    "check": "127"
+  },
+  "check_virus_file_exists": {
+    "path": "/var/log/virus.txt",
+    "type": "file_exists"
+  }
+}' \
+  http://localhost:8000/
+
 
 
 $ # To ensure that the system works fine, We can \
