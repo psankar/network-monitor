@@ -12,6 +12,10 @@ import (
 	"github.com/psankar/network-monitor/Minion/minion"
 )
 
+// minionURLs refer to the list of URLs of the
+// minion machines. In production, this could
+// come from zookeeper or some such distributed consensus
+// system that maintains membership in a correct way.
 var minionURLs = []struct {
 	Hostname string
 	URL      string
@@ -22,6 +26,9 @@ var minionURLs = []struct {
 	{"Machine-9003", "http://127.0.0.1:9003/"},
 }
 
+// numWorkers is the maximum number of parallel
+// HTTP connections that could be opened.
+// This should be less than your ulimits
 const numWorkers = 2
 
 type Operation struct {
