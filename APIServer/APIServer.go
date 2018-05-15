@@ -62,7 +62,6 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	var wg sync.WaitGroup
 	var opResp OpResp
 	opResp.OperationID = k
-	var collectorWG sync.WaitGroup
 
 	switch v.Type {
 	case OpTypeDoesExist:
@@ -161,7 +160,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		}
 	default:
 		opResp.ErroneousRequest = true
-		opResp.ErrorMessage = "Unknown type of `Operation"
+		opResp.ErrorMessage = "Unknown type of `Operation`"
 		goto end
 	}
 
@@ -173,6 +172,21 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 		close(unreachableMachines)
 		close(errMachines)
 	}()
+
+	accumulateResults(&opResp, passMachines, failedMachines,
+		unreachableMachines, errMachines)
+
+	opResp.ErroneousRequest = false
+	opResp.ErrorMessage = ""
+
+end:
+	ch <- opResp
+
+}
+
+func accumulateResults(opResp *OpResp, passMachines, failedMachines,
+	unreachableMachines, errMachines chan string) {
+	var collectorWG sync.WaitGroup
 
 	collectorWG.Add(1)
 	go func() {
@@ -207,13 +221,6 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	}()
 
 	collectorWG.Wait()
-
-	opResp.ErroneousRequest = false
-	opResp.ErrorMessage = ""
-
-end:
-	ch <- opResp
-
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
