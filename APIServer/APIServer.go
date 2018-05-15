@@ -146,12 +146,14 @@ type resultsChan struct {
 	errMachines         chan string
 }
 
+// processOperation takes each unique Operation in the HTTP input
+// and tries to process it by checking with the Minion nodes.
+// After the processing is done, the ch channel (parameter below)
+// will be notified
 func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 	ch chan OpResp, jobs chan contactMinionJob) {
 	defer opsWg.Done()
 
-	// TODO: Since these four are always passed along together,
-	// we could create a new resultsChannels struct
 	results := resultsChan{
 		make(chan string), make(chan string),
 		make(chan string), make(chan string),
@@ -344,6 +346,8 @@ type contactMinionJob struct {
 	done      chan<- bool
 }
 
+// A simple worker pool to avoid sending a million http requests
+// in parallel at a time, causing out-of-fd errors
 func worker(id int, jobs <-chan contactMinionJob) {
 	for i := range jobs {
 		log.Println("WorkerID: ", id, "contacting hostname:",
