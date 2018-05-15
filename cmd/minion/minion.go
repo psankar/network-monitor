@@ -13,7 +13,7 @@ import (
 	"github.com/psankar/network-monitor/pkg/minion"
 )
 
-func DoesExistHandler(w http.ResponseWriter, r *http.Request) {
+func doesExistHandler(w http.ResponseWriter, r *http.Request) {
 	x := minion.DoesExistReq{}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -46,7 +46,7 @@ func DoesExistHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(jData)
 }
 
-func DoesContainHandler(w http.ResponseWriter, r *http.Request) {
+func doesContainHandler(w http.ResponseWriter, r *http.Request) {
 	x := minion.DoesContainReq{}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -98,7 +98,7 @@ end:
 	w.Write(jData)
 }
 
-func IsRunningHandler(w http.ResponseWriter, r *http.Request) {
+func isRunningHandler(w http.ResponseWriter, r *http.Request) {
 	x := minion.IsRunningReq{}
 	decoder := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -144,9 +144,9 @@ func IsRunningHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/does-exist", DoesExistHandler)
-	http.HandleFunc("/does-contain", DoesContainHandler)
-	http.HandleFunc("/is-running", IsRunningHandler)
+	http.HandleFunc("/does-exist", doesExistHandler)
+	http.HandleFunc("/does-contain", doesContainHandler)
+	http.HandleFunc("/is-running", isRunningHandler)
 
 	var port string
 	var found bool
