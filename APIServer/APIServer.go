@@ -53,7 +53,7 @@ const (
 )
 
 type OpResp struct {
-	OperationID string `json:"-"`
+	operationID string
 
 	// ErroneousRequest indicates whether the operation completed succesfully
 	// or not. If this is set to true, ErrorMessage will have a meaningful
@@ -161,7 +161,7 @@ func processOperation(k string, v Operation, opsWg *sync.WaitGroup,
 
 	var wg sync.WaitGroup
 	var opResp OpResp
-	opResp.OperationID = k
+	opResp.operationID = k
 
 	switch v.Type {
 	case OpTypeDoesExist:
@@ -316,7 +316,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// Assumption is that every operation will have an unique id
 	m := make(map[string]OpResp)
 	for i := range ch {
-		m[i.OperationID] = i
+		m[i.operationID] = i
 	}
 
 	jData, err := json.MarshalIndent(m, "", " ")
