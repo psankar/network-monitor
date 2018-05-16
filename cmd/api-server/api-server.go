@@ -280,6 +280,12 @@ func accumulateResults(opResp *OpResp, r *resultsChan) {
 	collectorWG.Wait()
 }
 
+// Ideally we would use a library for UUID or xid
+// in production. But since we cannot use a 3rd party
+// library here, we would go with a global counter
+var tracingID uint64
+var traceLock sync.Mutex
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	x := make(map[string]Operation)
 
@@ -292,6 +298,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
+
+	traceLock.Lock()
+	traceID := tracingID
+	tracingID++
+	traceLock.Unlock()
 
 	ch := make(chan OpResp)
 
@@ -317,7 +328,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]OpResp)
 	for i := range ch {
 		m[i.operationID] = i
+
+		// We can enable either this debug log or the one below the for loop
+		// to persist the results, in a log-aggregator service.
+		// We can also store this in a relational database /k-v store
+		// based on our requirement. If we need to store in a relationaldb,
+		// we need traceID+i.operationID as the composite primary key.
+		// log.Println(traceID, i.operationID, i.PassedMachines, i.FailedMachines,
+		//	i.ErrorMachines, i.UnReachableMachines)
 	}
+
+	// This can be stored into any database, with traceID as the unique key
+	// We can also expand m into individual colums and store the results,
+	// if we want to store in a relational database. For now, I am printing
+	// this in log which can be redirected to a log management service, for
+	// future queries where traceID from the consumer can be used for filtering.
+	log.Println(traceID, m)
 
 	jData, err := json.MarshalIndent(m, "", " ")
 	if err != nil {
@@ -350,8 +376,8 @@ type contactMinionJob struct {
 // in parallel at a time, causing out-of-fd errors
 func worker(id int, jobs <-chan contactMinionJob) {
 	for i := range jobs {
-		log.Println("WorkerID: ", id, "contacting hostname:",
-			i.hostname, " for ", i.minionReq.URL)
+		// log.Println("WorkerID: ", id, "contacting hostname:",
+		//	i.hostname, " for ", i.minionReq.URL)
 		contactMinion(i.minionReq, i.hostname, i.results)
 		// Synchronously block until the actual HTTP request is made
 		// and then notifies in the done channel of each request
